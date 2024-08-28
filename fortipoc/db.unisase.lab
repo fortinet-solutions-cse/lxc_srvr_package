@@ -1,0 +1,21 @@
+;
+; BIND data file for local loopback interface
+;
+$TTL    604800
+@       IN      SOA     unisase.lab. root.unisase.lab. (
+                              2         ; Serial
+                         604800         ; Refresh
+                          86400         ; Retry
+                        2419200         ; Expire
+                         604800 )       ; Negative Cache TTL
+;
+@       IN      NS      unisase.lab.
+unisase.lab. IN    A       0.0.0.0
+bc1app     IN      A       10.3.0.7
+bc2app     IN      A       10.4.0.7
+dc1app     IN      A       10.1.0.7
+dc2app     IN      A       10.2.0.7
+bc1win     IN      A       10.3.0.8
+bc2win     IN      A       10.4.0.8
+dc1win     IN      A       10.1.0.8
+dc2win     IN      A       10.2.0.8

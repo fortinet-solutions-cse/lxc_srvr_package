@@ -1,0 +1,5 @@
+Alias /files/ "/home/azureadmin/fortipoc/files/"
+<Directory "/home/azureadmin/fortipoc/files/">
+    Options Indexes FollowSymLinks
+    Require all granted
+</Directory>

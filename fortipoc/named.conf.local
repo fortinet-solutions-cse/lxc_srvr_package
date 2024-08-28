@@ -1,0 +1,4 @@
+zone "unisase.lab" {
+    type master;
+    file "/etc/bind/zones/db.unisase.lab";
+};

